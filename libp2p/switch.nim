@@ -32,7 +32,6 @@ import
   nameresolving/nameresolver,
   peerid,
   peerstore,
-  autotls/manager,
   errors,
   utility,
   dialer
@@ -59,7 +58,6 @@ type
     acceptFuts: seq[Future[void]]
     dialer*: Dial
     peerStore*: PeerStore
-    autotls*: AutoTLSManager
     nameResolver*: NameResolver
     started: bool
     services*: seq[Service]
@@ -334,9 +332,6 @@ proc stop*(s: Switch) {.public, async: (raises: [CancelledError]).} =
     except CatchableError as exc:
       warn "error cleaning up transports", description = exc.msg
 
-  if not s.autotls.isNil:
-    await s.autotls.stop()
-
   await s.ms.stop()
 
   trace "Switch stopped"
@@ -363,7 +358,9 @@ proc start*(s: Switch) {.public, async: (raises: [CancelledError, LPError]).} =
   for fut in startFuts:
     if fut.failed:
       await s.stop()
-      raise newException(LPError, "starting transports failed", fut.error)
+      raise newException(
+        LPError, "starting transports failed: " & $fut.error.msg, fut.error
+      )
 
   for t in s.transports: # for each transport
     if t.addrs.len > 0 or t.running:
@@ -375,8 +372,6 @@ proc start*(s: Switch) {.public, async: (raises: [CancelledError, LPError]).} =
 
   await s.peerInfo.update()
   await s.ms.start()
-  if not s.autotls.isNil:
-    await s.autotls.start(s.peerInfo)
   s.started = true
 
   debug "Started libp2p node", peer = s.peerInfo
@@ -388,7 +383,6 @@ proc newSwitch*(
     connManager: ConnManager,
     ms: MultistreamSelect,
     peerStore: PeerStore,
-    autotls: AutoTLSManager = nil,
     nameResolver: NameResolver = nil,
     services = newSeq[Service](),
 ): Switch {.raises: [LPError].} =
@@ -404,7 +398,6 @@ proc newSwitch*(
     dialer:
       Dialer.new(peerInfo.peerId, connManager, peerStore, transports, nameResolver),
     nameResolver: nameResolver,
-    autotls: autotls,
     services: services,
   )
 
